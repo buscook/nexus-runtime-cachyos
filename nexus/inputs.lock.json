@@ -7,8 +7,8 @@
   "sdkArm64": "registry.gitlab.steamos.cloud/proton/steamrt4/sdk/arm64-llvm@sha256:3a8199ffdd54c51f47e1b0d059e6fe583745214043f1f8c2e2e18377e72a3776",
   "upstream": {
     "proton": "7a94df49e4695fc101fd47d614166e69c43d9669",
-    "wine": "07d9ba631e3bde5130d1d0dad0c864e384a36df3",
-    "xgameruntime": "a66eebedbaff9093b068216c659911750591248f"
+    "wine": "aa3a9b2f8ece9a378d5d118052f09f9c35ccd007",
+    "xgameruntime": "d5ec2d0e5bcf3dae6b16e61dd37f3c30fcf78352"
   },
   "modules": {
     "dxvk": "a78a467cadb22bee928904290cf8e7921b121851",
@@ -53,8 +53,8 @@
     "cachyosProton": "26827b131c93a1ef9e29f27e0260f1051fccbff5",
     "cachyosWine": "cd14106e4fc0f96006005b07985e49cc1517e9c0",
     "nexusProton": "a22a5197cc680f38eb8db222f78004cd98a884af",
-    "wine": "07d9ba631e3bde5130d1d0dad0c864e384a36df3",
-    "xgameruntime": "a66eebedbaff9093b068216c659911750591248f",
+    "wine": "aa3a9b2f8ece9a378d5d118052f09f9c35ccd007",
+    "xgameruntime": "d5ec2d0e5bcf3dae6b16e61dd37f3c30fcf78352",
     "architectures": [
       "x86_64"
     ],
