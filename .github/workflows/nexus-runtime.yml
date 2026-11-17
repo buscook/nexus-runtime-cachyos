@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   auxiliary:
-    if: github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[source-only]')
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
@@ -65,7 +65,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   runtime:
-    if: github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[source-only]')
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     needs: auxiliary
     outputs:
       checkpoint: ${{ steps.checkpoint.outputs.name }}
@@ -161,7 +161,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   validation:
-    if: github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[source-only]')
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     needs: runtime
     runs-on: ubuntu-24.04
     timeout-minutes: 90

@@ -53,14 +53,14 @@ test('ARM64 candidate build also rejects a non-main CI invocation before touchin
   assert.notEqual(result.status,0);
   assert.match(result.stderr,/Distribution builds are main-only/);
 });
-test('ARM64 candidate workflow compiles only on main, including manual dispatch',()=>{
+test('ARM64 candidate workflow compiles only from an explicit manual dispatch on main',()=>{
   const text=fs.readFileSync(path.join(repository,'.github/workflows/nexus-runtime-arm64.yml'),'utf8');
   assert.match(text,/^on:\n  push:\n    branches: \[main\]\n  workflow_dispatch:\npermissions:\n  contents: read\n/m);
   assert.doesNotMatch(text,/pull_request|secrets\.|gh release|contents: write/);
   const jobs=text.slice(text.indexOf('\njobs:\n')).split(/\n  (?=[a-z-]+:\n)/).slice(1);
   assert.equal(jobs.length,(text.match(/^    runs-on: /gm)||[]).length);
   assert.ok(jobs.length>=2);
-  for(const job of jobs)assert.ok(job.split('\n')[1]==="    if: github.repository == 'domsvoboda/nexus-runtime' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[source-only]')");
+  for(const job of jobs)assert.ok(job.split('\n')[1]==="    if: github.repository == 'domsvoboda/nexus-runtime' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'");
   assert.match(text,/node nexus\/build-auxiliary\.mjs --arch arm64 /);
   assert.match(text,/node nexus\/build-runtime\.mjs --arch arm64 /);
   assert.match(text,/runs-on: ubuntu-24\.04-arm/);
@@ -71,16 +71,18 @@ test('ARM64 workflow supplies the exact llvm-mingw archive and SHA-256',()=>{
   assert.match(text,/^  NEXUS_LLVM_MINGW_SHA256: [a-f0-9]{64}\n/m);
 });
 
-test('source-only integrations never compile x64 or ARM64 candidates',()=>{
-  const guard="github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[source-only]')";
+test('ordinary push and pull request events never compile x64 or ARM64 candidates',()=>{
+  const guard="github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'";
   for(const file of ['nexus-runtime.yml','nexus-runtime-arm64.yml']){
     const text=fs.readFileSync(path.join(repository,'.github/workflows',file),'utf8');
     const jobs=text.slice(text.indexOf('\njobs:\n')).split(/\n  (?=[a-z-]+:\n)/).slice(1);
     for(const job of jobs)assert.equal(job.split('\n')[1],'    if: '+(file==='nexus-runtime-arm64.yml'?"github.repository == 'domsvoboda/nexus-runtime' && ":'')+guard);
   }
-  for(const ref of ['refs/heads/main','refs/heads/develop','refs/pull/1/merge'])
-    for(const message of ['ordinary integration','[source-only] Integrate checked source']){
-      const run=ref==='refs/heads/main'&&!message.includes('[source-only]');
-      assert.equal(run,ref==='refs/heads/main'&&message==='ordinary integration');
-    }
+  const evaluate=(event,ref)=>event==='workflow_dispatch'&&ref==='refs/heads/main';
+  for(const event of ['push','pull_request'])
+    for(const ref of ['refs/heads/main','refs/heads/develop','refs/pull/1/merge'])
+      assert.equal(evaluate(event,ref),false);
+  assert.equal(evaluate('workflow_dispatch','refs/heads/main'),true);
+  for(const ref of ['refs/heads/develop','refs/heads/feature/example'])
+    assert.equal(evaluate('workflow_dispatch',ref),false);
 });

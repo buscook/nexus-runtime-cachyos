@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 // Auditable test plan for the Nexus Proton source-check job.
-// The normal plan runs every existing test file, including the native build
-// fixtures. Only an explicit [source-only] push commit message or pull request
-// title selects the noncompiling plan, which omits the reviewed native fixture
-// files and reports them as not run and not passed.
+// Ordinary pushes and pull requests run the noncompiling plan, which omits the
+// reviewed native fixture files and reports them as not run and not passed.
+// The full plan, including every native fixture, is reachable only through an
+// explicit manual dispatch on main. Commit messages and pull request titles
+// never select a build mode.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 export const MODES=Object.freeze(['full','source-only']);
-export const SOURCE_ONLY_MARKER='[source-only]';
 export const TEST_GROUPS=Object.freeze(['nexus','nexus/tests','nexus/ci','nexus/runtime-compat']);
 // Reviewed test files that compile C/C++ with a real compiler or the MinGW
 // toolchain. Adding a compiling fixture requires an explicit review and a new
@@ -54,33 +54,28 @@ export async function enumerateTestFiles(root=repository){
   return files;
 }
 
-// Mirrors the existing workflow convention exactly: a push reads only the
-// pushed HEAD commit message, a pull request reads only its title. Any other
-// event or a missing value keeps the normal full plan.
-export function resolveMode({eventName,headCommitMessage,pullRequestTitle}={}){
-  const marked=value=>typeof value==='string'&&value.includes(SOURCE_ONLY_MARKER);
-  if(eventName==='push')return marked(headCommitMessage)?'source-only':'full';
-  if(eventName==='pull_request')return marked(pullRequestTitle)?'source-only':'full';
-  return 'full';
+// The full native plan is reachable only through an explicit manual dispatch on
+// main. Every other event fails closed to the noncompiling source-only plan.
+export function resolveMode({eventName,ref}={}){
+  return eventName==='workflow_dispatch'&&ref==='refs/heads/main'?'full':'source-only';
 }
 
 // Reads the runner-provided event payload from GITHUB_EVENT_PATH without any
-// shell interpolation. A missing, unreadable or malformed context resolves to
-// the normal full plan, so only an explicit marker can select source-only mode.
-export async function readEventContext({eventName=process.env.GITHUB_EVENT_NAME,eventPath=process.env.GITHUB_EVENT_PATH}={}){
+// shell interpolation. The trusted ref comes from GITHUB_REF, which GitHub
+// documents as the canonical non-overridable ref; the payload's ref is not
+// used. A missing, unreadable or malformed context resolves to the
+// noncompiling source-only plan.
+export async function readEventContext({eventName=process.env.GITHUB_EVENT_NAME,eventPath=process.env.GITHUB_EVENT_PATH,runnerRef=process.env.GITHUB_REF}={}){
   const name=typeof eventName==='string'?eventName:'';
-  if(name!=='push'&&name!=='pull_request')return {eventName:'other'};
+  const trustedRef=typeof runnerRef==='string'?runnerRef:undefined;
   let payload;
   try{
     if(typeof eventPath!=='string'||!eventPath)throw Error('Missing GITHUB_EVENT_PATH');
     payload=JSON.parse(await fs.readFile(eventPath,'utf8'));
-  }catch(error){return {eventName:name};}
-  if(!payload||typeof payload!=='object'||Array.isArray(payload))return {eventName:name};
-  return {
-    eventName:name,
-    headCommitMessage:payload.head_commit&&typeof payload.head_commit.message==='string'?payload.head_commit.message:undefined,
-    pullRequestTitle:payload.pull_request&&typeof payload.pull_request.title==='string'?payload.pull_request.title:undefined,
-  };
+  }catch(error){return {eventName:name, ref:undefined};}
+  if(!payload||typeof payload!=='object'||Array.isArray(payload))return {eventName:name, ref:undefined};
+  if(payload.ref!==undefined&&typeof payload.ref!=='string')return {eventName:name, ref:undefined};
+  return {eventName:name, ref:trustedRef};
 }
 
 export async function buildPlan({mode,files,root=repository}={}){
@@ -133,7 +128,7 @@ async function main(argv){
     // Only an allowlisted literal reaches stdout, so the workflow can append
     // it to GITHUB_OUTPUT without ever interpolating untrusted event text.
     process.stdout.write(`mode=${mode}\n`);
-    process.stderr.write(`Source-check mode selected from the CI event (${context.eventName==='push'||context.eventName==='pull_request'?context.eventName:'other'}): ${mode}\n`);
+    process.stderr.write(`Source-check mode selected from the CI event (${context.eventName||'other'}): ${mode}\n`);
     await writeSummary(`Source-check mode selected from the CI event: ${mode}\n`);
     return 0;
   }
