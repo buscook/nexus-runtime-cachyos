@@ -9,7 +9,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {
-  MODES,SOURCE_ONLY_MARKER,TEST_GROUPS,NATIVE_TEST_FILES,assertTestPath,enumerateTestFiles,
+  MODES,TEST_GROUPS,NATIVE_TEST_FILES,assertTestPath,enumerateTestFiles,
   resolveMode,readEventContext,buildPlan,assertNoUnreviewedCompilers,planSummary,
 } from './source-check-plan.mjs';
 
@@ -127,31 +127,33 @@ test('the plan rejects unstable, foreign or non-test paths',async()=>{
   for(const file of ['nexus/build-policy.test.mjs','nexus/ci/source-check-plan.test.mjs'])assert.equal(assertTestPath(file),file);
 });
 
-test('push and pull request markers keep the existing exact [source-only] semantics',()=>{
-  assert.equal(SOURCE_ONLY_MARKER,'[source-only]');
-  const marked='nexus: dependency pins\n\n[source-only]\n';
-  assert.equal(resolveMode({eventName:'push',headCommitMessage:marked}),'source-only');
-  assert.equal(resolveMode({eventName:'push',headCommitMessage:'nexus: dependency pins'}),'full');
-  assert.equal(resolveMode({eventName:'pull_request',pullRequestTitle:'nexus: [source-only] dependency pins'}),'source-only');
-  assert.equal(resolveMode({eventName:'pull_request',pullRequestTitle:'nexus: dependency pins'}),'full');
-  // A push reads only its HEAD commit message; a pull request reads only its title.
-  assert.equal(resolveMode({eventName:'push',headCommitMessage:'plain',pullRequestTitle:marked}),'full');
-  assert.equal(resolveMode({eventName:'pull_request',pullRequestTitle:'plain',headCommitMessage:marked}),'full');
-  // Missing or unknown event values fail closed to the normal full plan.
-  assert.equal(resolveMode(),'full');
-  assert.equal(resolveMode({}),'full');
-  assert.equal(resolveMode({eventName:'push'}),'full');
-  assert.equal(resolveMode({eventName:'pull_request'}),'full');
-  assert.equal(resolveMode({eventName:'workflow_dispatch',headCommitMessage:marked,pullRequestTitle:marked}),'full');
-  assert.equal(resolveMode({eventName:'push',headCommitMessage:'[Source-Only]'}),'full');
-  // Resolution depends only on the event type and marker, not on the branch.
-  for(const ref of ['refs/heads/main','refs/heads/develop','refs/heads/feature/example','refs/heads/fix/example'])
-    assert.equal(resolveMode({eventName:'push',headCommitMessage:marked,ref}),'source-only');
-  for(const base of ['main','develop'])
-    assert.equal(resolveMode({eventName:'pull_request',pullRequestTitle:'nexus: [source-only] pins',base}),'source-only');
+test('only an explicit manual dispatch on main selects the full native plan',()=>{
+  assert.equal(resolveMode({eventName:'workflow_dispatch',ref:'refs/heads/main'}),'full');
+  for(const ref of ['refs/heads/develop','refs/heads/feature/example','refs/heads/fix/example','refs/tags/v1',''])
+    assert.equal(resolveMode({eventName:'workflow_dispatch',ref}),'source-only');
+  assert.equal(resolveMode({eventName:'workflow_dispatch'}),'source-only');
 });
 
-test('GITHUB_EVENT_PATH is parsed safely and any missing context stays full',async()=>{
+test('ordinary push and pull request events never compile or package',()=>{
+  for(const ref of ['refs/heads/main','refs/heads/develop','refs/heads/feature/example'])
+    assert.equal(resolveMode({eventName:'push',ref}),'source-only');
+  assert.equal(resolveMode({eventName:'pull_request',ref:'refs/heads/main'}),'source-only');
+  assert.equal(resolveMode({}),'source-only');
+  assert.equal(resolveMode(),'source-only');
+  assert.equal(resolveMode({eventName:'schedule'}),'source-only');
+});
+
+test('commit messages and pull request titles cannot promote a build',()=>{
+  const marked='nexus: dependency pins\n\n[source-only]\n';
+  // The old marker text is inert: it cannot select or suppress a build.
+  assert.equal(resolveMode({eventName:'push',ref:'refs/heads/main',headCommitMessage:marked}),'source-only');
+  assert.equal(resolveMode({eventName:'pull_request',ref:'refs/heads/main',pullRequestTitle:marked}),'source-only');
+  assert.equal(resolveMode({eventName:'workflow_dispatch',ref:'refs/heads/main',headCommitMessage:marked,pullRequestTitle:marked}),'full');
+  for(const ref of ['refs/heads/main','refs/heads/develop','refs/heads/feature/example'])
+    assert.equal(resolveMode({eventName:'push',ref,headCommitMessage:marked}),'source-only');
+});
+
+test('GITHUB_EVENT_PATH is parsed safely and the trusted runner ref decides the mode',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'nexus-source-check-event-'));
   const write=async(name,value)=>{
     const file=path.join(root,name);
@@ -159,30 +161,27 @@ test('GITHUB_EVENT_PATH is parsed safely and any missing context stays full',asy
     return file;
   };
   try{
-    const markedPush=await write('push.json',{head_commit:{message:'nexus: pins\n\n[source-only]'}});
-    assert.equal(resolveMode(await readEventContext({eventName:'push',eventPath:markedPush})),'source-only');
-    const plainPush=await write('plain-push.json',{head_commit:{message:'nexus: pins'}});
-    assert.equal(resolveMode(await readEventContext({eventName:'push',eventPath:plainPush})),'full');
-    const markedPr=await write('pr.json',{pull_request:{title:'nexus: [source-only] pins'}});
-    assert.equal(resolveMode(await readEventContext({eventName:'pull_request',eventPath:markedPr})),'source-only');
-    const plainPr=await write('plain-pr.json',{pull_request:{title:'nexus: pins'}});
-    assert.equal(resolveMode(await readEventContext({eventName:'pull_request',eventPath:plainPr})),'full');
-    // A push never reads the pull request title and a PR never reads a commit message.
-    const mixedPush=await write('mixed-push.json',{head_commit:{message:'plain'},pull_request:{title:'[source-only]'}});
-    assert.equal(resolveMode(await readEventContext({eventName:'push',eventPath:mixedPush})),'full');
-    const mixedPr=await write('mixed-pr.json',{head_commit:{message:'[source-only]'},pull_request:{title:'plain'}});
-    assert.equal(resolveMode(await readEventContext({eventName:'pull_request',eventPath:mixedPr})),'full');
-    // Missing, unreadable, invalid or wrongly typed context falls back to full.
+    // A bare payload ref is not trusted; GITHUB_REF is the canonical ref.
+    const mainDispatch=await write('main.json',{ref:'main'});
+    assert.equal(resolveMode(await readEventContext({eventName:'workflow_dispatch',eventPath:mainDispatch,runnerRef:'refs/heads/main'})),'full');
+    // A payload claiming main cannot override a non-main runner ref.
+    const developDispatch=await write('develop.json',{ref:'refs/heads/main'});
+    assert.equal(resolveMode(await readEventContext({eventName:'workflow_dispatch',eventPath:developDispatch,runnerRef:'refs/heads/develop'})),'source-only');
+    // Missing runner ref fails closed even with a main-looking payload.
+    assert.equal(resolveMode(await readEventContext({eventName:'workflow_dispatch',eventPath:mainDispatch,runnerRef:''})),'source-only');
+    const push=await write('push.json',{ref:'refs/heads/main',head_commit:{message:'nexus: pins'}});
+    assert.equal(resolveMode(await readEventContext({eventName:'push',eventPath:push,runnerRef:'refs/heads/main'})),'source-only');
+    const pr=await write('pr.json',{ref:'refs/heads/main',pull_request:{title:'nexus: pins'}});
+    assert.equal(resolveMode(await readEventContext({eventName:'pull_request',eventPath:pr,runnerRef:'refs/heads/main'})),'source-only');
+    // Missing, unreadable, invalid or wrongly typed context falls back to source-only.
     for(const context of [
-      await readEventContext({eventName:'push',eventPath:path.join(root,'absent.json')}),
-      await readEventContext({eventName:'push',eventPath:''}),
-      await readEventContext({eventName:'push',eventPath:await write('invalid.json','{not json')}),
-      await readEventContext({eventName:'push',eventPath:await write('array.json',['[source-only]'])}),
-      await readEventContext({eventName:'push',eventPath:await write('object.json',{head_commit:{message:['[source-only]']}})}),
-      await readEventContext({eventName:'push',eventPath:await write('nested.json',{head_commit:null,pull_request:null})}),
-      await readEventContext({eventName:'workflow_dispatch',eventPath:markedPush}),
-      await readEventContext({eventName:'',eventPath:markedPush}),
-    ])assert.equal(resolveMode(context),'full');
+      await readEventContext({eventName:'workflow_dispatch',eventPath:path.join(root,'absent.json'),runnerRef:'refs/heads/main'}),
+      await readEventContext({eventName:'workflow_dispatch',eventPath:'',runnerRef:'refs/heads/main'}),
+      await readEventContext({eventName:'workflow_dispatch',eventPath:await write('invalid.json','{not json'),runnerRef:'refs/heads/main'}),
+      await readEventContext({eventName:'workflow_dispatch',eventPath:await write('array.json',['refs/heads/main']),runnerRef:'refs/heads/main'}),
+      await readEventContext({eventName:'workflow_dispatch',eventPath:await write('object.json',{ref:123}),runnerRef:'refs/heads/main'}),
+      await readEventContext({eventName:'',eventPath:mainDispatch,runnerRef:'refs/heads/main'}),
+    ])assert.equal(resolveMode(context),'source-only');
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
@@ -191,42 +190,49 @@ test('untrusted event text never reaches the shell or the mode output',async()=>
   const canary=path.join(root,'injected');
   const exists=async()=>fs.stat(canary).then(()=>true,()=>false);
   const write=async(name,value)=>{const file=path.join(root,name);await fs.writeFile(file,JSON.stringify(value));return file;};
-  const detect=(eventName,eventPath)=>{
+  const detect=(eventName,eventPath,runnerRef)=>{
     const env={...process.env,GITHUB_EVENT_NAME:eventName};
     if(eventPath===undefined)delete env.GITHUB_EVENT_PATH;
     else env.GITHUB_EVENT_PATH=eventPath;
+    if(runnerRef===undefined)delete env.GITHUB_REF;
+    else env.GITHUB_REF=runnerRef;
     return spawnSync(process.execPath,[modulePath,'--detect-mode'],{cwd:repository,encoding:'utf8',env});
   };
   try{
     const hostile=`fix: source\n$(touch ${canary}) \`touch ${canary}\` [source-only] ; touch ${canary}\n`;
-    const pushFile=await write('push.json',{head_commit:{message:hostile}});
-    const push=detect('push',pushFile);
+    const pushFile=await write('push.json',{ref:'refs/heads/main',head_commit:{message:hostile}});
+    const push=detect('push',pushFile,'refs/heads/main');
     assert.equal(push.status,0,push.stderr);
     assert.equal(push.stdout,'mode=source-only\n');
     assert.match(push.stdout,/^mode=(?:full|source-only)\n$/,'the output stays inside the allowlist');
     assert.equal(await exists(),false);
     assert.ok(!push.stderr.includes('touch'),'the untrusted message must not be echoed');
     assert.ok(!push.stdout.includes('touch'));
-    const plainFile=await write('plain.json',{head_commit:{message:'$(touch '+canary+')'}});
-    const plain=detect('push',plainFile);
-    assert.equal(plain.status,0,plain.stderr);
-    assert.equal(plain.stdout,'mode=full\n');
+    // A main-looking payload cannot override a non-main runner ref.
+    const mainFile=await write('main.json',{ref:'refs/heads/main',head_commit:{message:hostile}});
+    const feature=detect('workflow_dispatch',mainFile,'refs/heads/feature/example');
+    assert.equal(feature.status,0,feature.stderr);
+    assert.equal(feature.stdout,'mode=source-only\n');
     assert.equal(await exists(),false);
-    const titleFile=await write('title.json',{pull_request:{title:'$(touch '+canary+') [source-only]'}});
-    const title=detect('pull_request',titleFile);
-    assert.equal(title.status,0,title.stderr);
-    assert.equal(title.stdout,'mode=source-only\n');
+    // The trusted runner ref selects full on manual main.
+    const main=detect('workflow_dispatch',mainFile,'refs/heads/main');
+    assert.equal(main.status,0,main.stderr);
+    assert.equal(main.stdout,'mode=full\n');
     assert.equal(await exists(),false);
-    // Missing context and an unexpected event name keep the full plan.
-    const missing=detect('pull_request',undefined);
+    // Missing runner ref fails closed.
+    const noRef=detect('workflow_dispatch',mainFile,undefined);
+    assert.equal(noRef.status,0,noRef.stderr);
+    assert.equal(noRef.stdout,'mode=source-only\n');
+    // Missing context and an unexpected event name stay source-only.
+    const missing=detect('pull_request',undefined,'refs/heads/main');
     assert.equal(missing.status,0,missing.stderr);
-    assert.equal(missing.stdout,'mode=full\n');
-    const unknown=detect('workflow_dispatch',titleFile);
+    assert.equal(missing.stdout,'mode=source-only\n');
+    const unknown=detect('schedule',mainFile,'refs/heads/main');
     assert.equal(unknown.status,0,unknown.stderr);
-    assert.equal(unknown.stdout,'mode=full\n');
-    const invalid=detect('push',await (async()=>{const file=path.join(root,'invalid.json');await fs.writeFile(file,'{');return file;})());
+    assert.equal(unknown.stdout,'mode=source-only\n');
+    const invalid=detect('push',await (async()=>{const file=path.join(root,'invalid.json');await fs.writeFile(file,'{');return file;})(),'refs/heads/main');
     assert.equal(invalid.status,0,invalid.stderr);
-    assert.equal(invalid.stdout,'mode=full\n');
+    assert.equal(invalid.stdout,'mode=source-only\n');
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
@@ -252,13 +258,13 @@ test('source-only refuses unreviewed compiler invocations and reports omissions 
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
-test('the workflow keeps full checks by default and gates only explicit source-only runs',async()=>{
+test('the workflow defaults to noncompiling source-only checks and keeps the full plan manual-main only',async()=>{
   const workflow=await workflowText();
   assert.deepEqual(MODES,['full','source-only']);
   assert.match(workflow,/branches: \[main, develop, 'feature\/\*\*', 'fix\/\*\*'\]/);
   assert.match(workflow,/pull_request:\n    branches: \[main, develop\]/);
   assert.ok(!workflow.includes('[skip ci]')&&!workflow.includes('[skip-ci]'),'no skip-ci bypass');
-  // The source-only mode is available for push to main/develop and PRs to both.
+  // Ordinary push/PR runs the noncompiling plan; the full plan is manual-main only.
   const pushBlock=workflow.slice(workflow.indexOf('  push:'),workflow.indexOf('  pull_request:'));
   const prBlock=workflow.slice(workflow.indexOf('  pull_request:'),workflow.indexOf('permissions:'));
   for(const name of ['main','develop'])assert.ok(pushBlock.includes(name)&&prBlock.includes(name),'trigger keeps '+name);
@@ -297,7 +303,7 @@ test('the workflow keeps full checks by default and gates only explicit source-o
     assert.ok(!sourceOnly.includes(name),'source-only install must not install '+name);
 });
 
-test('candidate workflows keep their main-only and source-only guards unchanged',async()=>{
+test('candidate workflows compile only from an explicit manual dispatch on main',async()=>{
   const inputs=JSON.parse(await fs.readFile(path.join(repository,'nexus/inputs.lock.json'),'utf8'));
   const cachy=Boolean(inputs.variant);
   for(const name of ['nexus-runtime.yml','nexus-runtime-arm64.yml']){
@@ -305,8 +311,9 @@ test('candidate workflows keep their main-only and source-only guards unchanged'
     const guards=text.split('\n').filter(line=>/^    if: /.test(line));
     assert.equal(guards.length,3,name+' must keep exactly the three job-level guards');
     for(const guard of guards){
+      assert.match(guard,/github\.event_name == 'workflow_dispatch'/,name);
       assert.match(guard,/github\.ref == 'refs\/heads\/main'/,name);
-      assert.match(guard,/!contains\(github\.event\.head_commit\.message, '\[source-only\]'\)/,name);
+      assert.ok(!guard.includes('[source-only]'),name+' must not depend on commit text');
     }
     if(cachy&&name==='nexus-runtime-arm64.yml')
       for(const guard of guards)assert.match(guard,/github\.repository == 'domsvoboda\/nexus-runtime'/);
