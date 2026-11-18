@@ -833,17 +833,33 @@ ifneq ($(WITHOUT_TTS),1)
 ##
 
 $(eval $(call rules-source,piper,$(SRCDIR)/piper))
+
+PIPER_ONNX_DIR := $(OBJ)/nexus-onnxruntime
+PIPER_ONNX_ARCH := $(if $(filter aarch64,$(unix_ARCHS)),aarch64,x86_64)
+PIPER_ONNX_DOC := $(DST_DIR)/share/doc/nexus-runtime/onnxruntime
+PIPER_CMAKE_ARGS = -DONNXRUNTIME_DIR:PATH=$(PIPER_ONNX_DIR)
+
+$(OBJ)/.piper-post-source:
+	python3 "$(SRCDIR)/nexus/prepare-piper-onnx.py" \
+	    --source "$(PIPER_SRC)" --output "$(PIPER_ONNX_DIR)" --arch "$(PIPER_ONNX_ARCH)"
+	touch $@
+
+$(OBJ)/.piper-onnxruntime-docs: $(OBJ)/.piper-post-source
+	mkdir -p "$(PIPER_ONNX_DOC)"
+	cp -a "$(PIPER_ONNX_DIR)/LICENSE.txt" "$(PIPER_ONNX_DIR)/ThirdPartyNotices.txt" "$(PIPER_ONNX_DOC)/"
+	touch $@
+
 $(eval $(call rules-cmake,piper,x86_64,unix))
 $(eval $(call rules-cmake,piper,aarch64,unix))
 
-$(OBJ)/.piper-x86_64-post-build:
+$(OBJ)/.piper-x86_64-post-build: $(OBJ)/.piper-onnxruntime-docs
 	mkdir -p $(PIPER_x86_64_DST)/lib/$(x86_64-unix_TARGET)
 	mv $(PIPER_x86_64_DST)/*.so* $(PIPER_x86_64_DST)/lib/$(x86_64-unix_TARGET)
 	mkdir -p $(DST_DIR)/share
 	cp -a $(PIPER_x86_64_DST)/{espeak-ng-data,libtashkeel_model.ort} $(DST_DIR)/share/
 	touch $@
 
-$(OBJ)/.piper-aarch64-post-build:
+$(OBJ)/.piper-aarch64-post-build: $(OBJ)/.piper-onnxruntime-docs
 	mkdir -p $(PIPER_aarch64_DST)/lib/$(aarch64-unix_TARGET)
 	mv $(PIPER_aarch64_DST)/*.so* $(PIPER_aarch64_DST)/lib/$(aarch64-unix_TARGET)
 ifeq ($(findstring x86_64,$(unix_ARCHS)),)

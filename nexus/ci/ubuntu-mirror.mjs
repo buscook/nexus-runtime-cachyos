@@ -3,10 +3,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ubuntuUrl = /https?:\/\/(azure\.archive|archive|security)\.ubuntu\.com\/ubuntu(?=[\s/]|$)/g;
+// GitHub-hosted runners serve apt-mirrors.txt from a regional EC2 archive host.
+const mirrorHost = String.raw`(?:(?:[a-z]{2}(?:-[a-z]+)+-\d+\.)?ec2\.archive|azure\.archive|archive|security)\.ubuntu\.com`;
+const mirrorPattern = String.raw`https?://(${mirrorHost})/ubuntu(?=[\s/]|$)`;
+const ubuntuUrl = new RegExp(mirrorPattern, 'g');
+const ubuntuUrlTest = new RegExp(mirrorPattern);
 export function officialUbuntuMirrors(source) {
   return source.replace(ubuntuUrl, (_url, host) =>
-    `https://${host === 'security' ? 'security' : 'archive'}.ubuntu.com/ubuntu`);
+    `https://${host === 'security.ubuntu.com' ? 'security' : 'archive'}.ubuntu.com/ubuntu`);
 }
 
 export async function configureUbuntuMirrors(root = '/etc/apt') {
@@ -25,7 +29,7 @@ export async function configureUbuntuMirrors(root = '/etc/apt') {
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     if (!stat.isFile()) throw Error(`APT source must be a regular file: ${name}`);
     const source = await fs.readFile(file, 'utf8');
-    recognized ||= /https?:\/\/(?:azure\.archive|archive|security)\.ubuntu\.com\/ubuntu(?=[\s/]|$)/.test(source);
+    recognized ||= ubuntuUrlTest.test(source);
     const updated = officialUbuntuMirrors(source);
     if (source !== updated) plans.push({ file, updated });
   }

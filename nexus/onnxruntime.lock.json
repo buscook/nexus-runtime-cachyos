@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "package": {
+    "id": "Microsoft.ML.OnnxRuntime",
+    "version": "1.14.1",
+    "url": "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.14.1/microsoft.ml.onnxruntime.1.14.1.nupkg",
+    "filename": "microsoft.ml.onnxruntime.1.14.1.nupkg",
+    "size": 104750444,
+    "sha256": "3a277421efce94b5f91f4a5dc8efc1add99b4c01f547279d81098ffb4fafbb6d",
+    "sha512": "mctLvjIwbOQM4HuPU/x5qM/21O/4ZaT/Hi1F7I3zqMQA2jo3ozKaBwqPwMPdWr2WJ3OdqoiL3R8RgWjdg1UGcg==",
+    "source_commit": "c57cf374b67f72575546d7b4c69a1af4972e2b54",
+    "catalog": {
+      "url": "https://api.nuget.org/v3/catalog0/data/2023.02.27.18.52.05/microsoft.ml.onnxruntime.1.14.1.json",
+      "sha256": "d7e6834b367eb409eb020260d442aedc8e55bd9bb04f457e62b3bc9b2fde3be5"
+    }
+  },
+  "piper": {
+    "commit": "9d06b74959570772e8bcbe7a3f696664d2421167",
+    "cmake_sha256": "70d118a08c7671705b478a77c1b83b7b9951d9544ea3fb6739976e726c4c9c01",
+    "cmake_patched_sha256": "f1f53dbe102a02500e0649448bb9758e04c3f72b4ecc62794fe3981ac3c5ef3d"
+  },
+  "architectures": {
+    "x86_64": {
+      "runtime": "linux-x64",
+      "library": "libonnxruntime.so.1.14.1",
+      "sha256": "9a6828636dd7bed5887e6ce898cac1010cbbd593e6931b63423d189d42165434"
+    },
+    "aarch64": {
+      "runtime": "linux-arm64",
+      "library": "libonnxruntime.so.1.14.1",
+      "sha256": "8eec3ec997f04114baf667c22f192fbaaadc98cca3ece598d5042b8c2c57a44c"
+    }
+  },
+  "headers": [
+    "build/native/include/cpu_provider_factory.h",
+    "build/native/include/onnxruntime_c_api.h",
+    "build/native/include/onnxruntime_cxx_api.h",
+    "build/native/include/onnxruntime_cxx_inline.h",
+    "build/native/include/onnxruntime_run_options_config_keys.h",
+    "build/native/include/onnxruntime_session_options_config_keys.h",
+    "build/native/include/provider_options.h"
+  ],
+  "notices": [
+    "LICENSE.txt",
+    "ThirdPartyNotices.txt"
+  ]
+}
